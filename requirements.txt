@@ -1,0 +1,10 @@
+requests>=2.31
+beautifulsoup4>=4.12
+chromadb>=0.5
+sentence-transformers>=3.0
+ollama>=0.3
+datasets>=2.19
+ragas>=0.2
+deepeval>=1.0
+langchain-ollama>=0.2
+pytest>=8.0

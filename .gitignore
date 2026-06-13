@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+data/
+chroma_db/
+.deepeval/
+.deepeval_telemetry.txt
+.DS_Store
