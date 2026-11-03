@@ -1,0 +1,74 @@
+name: Benchmark
+
+# Runs the full RAGAS sweep: 3 retrieval configs x {baseline, reranked} = 6 setups,
+# each scored on all 30 eval questions. Every setup runs as its own parallel job
+# (CPU-only Ollama is slow), then a final job collects the scores into one table.
+on:
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: "Company ticker whose latest 10-K is benchmarked"
+        default: "AAPL"
+      limit:
+        description: "Questions per setup"
+        default: "30"
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [0, 1, 2]
+        rerank: [false, true]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+      - name: Install Ollama + models
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          (ollama serve > ollama.log 2>&1 &)
+          sleep 5
+          ollama pull llama3.2
+          ollama pull qwen2.5:7b
+          ollama pull nomic-embed-text
+      - name: Run setup
+        run: |
+          python evaluate.py "${{ inputs.ticker }}" --limit "${{ inputs.limit }}" \
+            --config ${{ matrix.config }} ${{ matrix.rerank && '--rerank' || '' }} \
+            --out result-${{ matrix.config }}-${{ matrix.rerank }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: result-${{ matrix.config }}-${{ matrix.rerank }}
+          path: result-*.json
+
+  table:
+    needs: sweep
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: results
+          merge-multiple: true
+      - name: Summarize
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import glob, json
+          rows = [r for f in sorted(glob.glob("results/*.json")) for r in json.load(open(f))]
+          print("| Config | Reranked | Faithfulness | Answer relevancy | Scored / asked |")
+          print("|---|---|---:|---:|---:|")
+          for r in rows:
+              print(f"| {r['config']} | {'yes' if r['rerank'] else 'no'} | {r['faithfulness']:.3f} "
+                    f"| {r['answer_relevancy']:.3f} | {r['n_scored']}/{r['n_questions']} |")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: all-results
+          path: results/

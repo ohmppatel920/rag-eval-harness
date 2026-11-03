@@ -9,6 +9,7 @@ Run:
     python evaluate.py AAPL                 # baseline grid (first 8 questions)
     python evaluate.py AAPL --rerank        # grid with reranking
     python evaluate.py AAPL --limit 30      # full eval set (slow on CPU)
+    python evaluate.py AAPL --config 1 --out r.json   # one grid point, save scores
 
 Notes for local models:
   * RAGAS embeds with a dedicated embedding model (nomic-embed-text), not the
@@ -88,6 +89,9 @@ def main() -> None:
     questions = json.loads(EVAL_SET.read_text())["questions"][: _limit(sys.argv)]
     # --quick: one config instead of the full grid, for fast smoke runs.
     configs = GRID[:1] if "--quick" in sys.argv else GRID
+    # --config N: run a single grid point (lets CI run the grid in parallel).
+    if "--config" in sys.argv:
+        configs = [GRID[int(sys.argv[sys.argv.index("--config") + 1])]]
     text = fetch_10k_text(ticker)
     print(f"Scoring {len(questions)} questions x {len(configs)} configs "
           f"(rerank={use_rerank}) ...")
@@ -106,12 +110,29 @@ def main() -> None:
     # Compact results table.
     print(f"\n{'config':<32} {'faithfulness':>14} {'answer_rel':>12}")
     print("-" * 60)
+    summary = []
     for name, scores in results:
         df = scores.to_pandas()
         print(
             f"{name:<32} {df['faithfulness'].mean():>14.3f} "
             f"{df['answer_relevancy'].mean():>12.3f}"
         )
+        summary.append({
+            "config": name, "rerank": use_rerank, "ticker": ticker.upper(),
+            "n_questions": len(df),
+            "n_scored": int(df[["faithfulness", "answer_relevancy"]].notna().all(axis=1).sum()),
+            "faithfulness": float(df["faithfulness"].mean()),
+            "answer_relevancy": float(df["answer_relevancy"].mean()),
+            "per_question": df.drop(
+                columns=["contexts", "retrieved_contexts"], errors="ignore"
+            ).to_dict("records"),
+        })
+
+    # --out PATH: save scores as JSON so a run's results can be published.
+    if "--out" in sys.argv:
+        out = Path(sys.argv[sys.argv.index("--out") + 1])
+        out.write_text(json.dumps(summary, indent=2, default=str))
+        print(f"wrote {out}")
 
 
 if __name__ == "__main__":
